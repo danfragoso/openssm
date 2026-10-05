@@ -1,0 +1,11 @@
+.{
+    .name = .openssm,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.1",
+    .fingerprint = 0x3d77675e54d5b1,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

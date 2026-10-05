@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>openssm — read-only Subaru Select Monitor in Zig</title>
+<meta name="description" content="A read-only Subaru Select Monitor reader for macOS, written in Zig, talking to a Tactrix OpenPort 2.0 over USB." />
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #121722;
+    --line: #1f2637;
+    --text: #d7dbe0;
+    --muted: #8b94a7;
+    --accent: #4ea1ff;
+    --accent2: #7ee787;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(1200px 600px at 70% -10%, #16233a 0%, var(--bg) 55%) no-repeat;
+    color: var(--text);
+    font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 64px 24px 96px; }
+  header h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); margin: 0; letter-spacing: -0.02em; }
+  header h1 .cursor { color: var(--accent); }
+  .tagline { color: var(--muted); font-size: 1.05rem; margin: 12px 0 0; max-width: 60ch; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+  .badge {
+    border: 1px solid var(--line); background: var(--panel);
+    color: var(--muted); border-radius: 999px; padding: 4px 12px; font-size: .8rem;
+  }
+  .badge.on { color: var(--accent2); border-color: #1d3a2b; }
+  section { margin-top: 56px; }
+  h2 { font-size: 1.05rem; text-transform: uppercase; letter-spacing: .14em; color: var(--muted); margin: 0 0 18px; }
+  p { margin: 0 0 14px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; overflow-x: auto; font-size: .85rem; line-height: 1.7; margin: 0;
+  }
+  code { color: var(--accent2); }
+  pre .c { color: var(--muted); }
+  pre .p { color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .card h3 { margin: 0 0 8px; font-size: .95rem; color: var(--text); }
+  .card p { color: var(--muted); font-size: .85rem; margin: 0; }
+  .flow { color: var(--muted); font-size: .85rem; }
+  footer { margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent2); margin-right: 8px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>open<span class="cursor">ssm_</span></h1>
+    <p class="tagline">
+      A read-only <strong>Subaru Select Monitor</strong> reader for macOS, in Zig.
+      Drives a Tactrix OpenPort 2.0 over USB and serves live SSM data over JSON IPC.
+    </p>
+    <div class="badges">
+      <span class="badge on">● hardware bring-up done</span>
+      <span class="badge">Zig 0.15</span>
+      <span class="badge">macOS · CDC-ACM · no sudo</span>
+      <span class="badge">SSM2 · SSM3 · SSM4</span>
+      <span class="badge">read-only</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>What it is</h2>
+    <p>
+      Subaru diagnostics live in three eras: <strong>SSM2</strong> on the 4800-baud
+      K-line, <strong>SSM3</strong> as SSM-over-CAN, and <strong>SSM4</strong> as
+      UDS/ISO14229 for 2007+ vehicles. <code>openssm</code> aims for close to 1:1
+      parity with the <em>read</em> functions of the dealership SSM3/SSM4 tools.
+    </p>
+    <p>
+      It is a hardware daemon: one process owns the OpenPort and speaks the
+      protocols, then exposes a JSON-lines endpoint so a CLI, GUI, logger, or
+      dashboard can all build on the same data. No J2534 DLL, no Windows, no Wine.
+    </p>
+  </section>
+
+  <section>
+    <h2>Architecture</h2>
+    <pre><span class="c">CLI / GUI / logger / any client</span>
+        │  <span class="p">JSON lines over Unix socket or TCP</span>
+        ▼
+   ipc.zig ── session.zig ── device.zig ── transport.zig
+                                              │
+                                    serial.zig ▼  <span class="c">(macOS CDC-ACM)</span>
+                                          OpenPort 2.0 ── ECU</pre>
+  </section>
+
+  <section>
+    <h2>Quick start</h2>
+    <pre><span class="c"># build + test</span>
+zig build &amp;&amp; zig build test
+
+<span class="c"># device info + battery voltage</span>
+./zig-out/bin/openssm probe
+
+<span class="c"># open the K-line SSM channel, send ECU init</span>
+./zig-out/bin/openssm kline
+
+<span class="c"># serve IPC (or: mock-serve to develop clients with no car)</span>
+./zig-out/bin/openssm serve --unix /tmp/openssm.sock
+
+<span class="c"># query it</span>
+printf '{"id":1,"method":"probe"}\n' | nc -U /tmp/openssm.sock
+<span class="c"># {"id":1,"result":{"firmware":"main code version : 1.17.4877","vbatt_mv":0}}</span></pre>
+  </section>
+
+  <section>
+    <h2>Roadmap</h2>
+    <div class="grid">
+      <div class="card"><h3>1 · Live K-line read</h3><p>Confirm SSM init on the car, implement <code>0xA8</code> address reads with RomRaider scaling.</p></div>
+      <div class="card"><h3>2 · SSM3-CAN + UDS</h3><p>SSM-over-CAN IDs, then VIN, DTCs and freeze frame over ISO14229.</p></div>
+      <div class="card"><h3>3 · Parameter database</h3><p>Parse RomRaider <code>log_defs.xml</code> / <code>ecu_defs.xml</code> into named parameters.</p></div>
+      <div class="card"><h3>4 · Streaming IPC</h3><p>Subscriptions, live push, optional msgpack framing.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <span class="dot"></span>read-only by design — no flash writes, no ECU programming.
+    &nbsp;·&nbsp; <a href="https://github.com/danfragoso/openssm">github.com/danfragoso/openssm</a>
+  </footer>
+</div>
+</body>
+</html>
