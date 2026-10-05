@@ -1,11 +1,11 @@
 const std = @import("std");
-const posix = std.posix;
 
 pub const ssm = @import("ssm.zig");
 pub const openport = @import("openport.zig");
 pub const transport = @import("transport.zig");
 pub const device = @import("device.zig");
 pub const serial = @import("serial.zig");
+pub const platform = @import("platform.zig");
 pub const ipc = @import("ipc.zig");
 pub const session = @import("session.zig");
 
@@ -178,15 +178,14 @@ fn runServe(gpa: std.mem.Allocator, opts: *Options, mock: bool) !void {
 
 fn resolveSerialPath(opts: *Options, buf: []u8) ![]const u8 {
     if (opts.serial) |p| return p;
-    var devdir = try std.fs.openDirAbsolute("/dev", .{ .iterate = true });
-    defer devdir.close();
-    return (try serial.firstCandidate(buf, devdir)) orelse {
+    return (try serial.firstCandidate(buf)) orelse {
         print("no OpenPort serial device found; pass --serial PATH\n", .{});
         return error.NoDevice;
     };
 }
 
 fn buildAddress(gpa: std.mem.Allocator, opts: *Options) !std.net.Address {
+    _ = gpa;
     if (opts.tcp) |hostport| {
         const colon = std.mem.lastIndexOfScalar(u8, hostport, ':') orelse return error.BadAddress;
         const host = hostport[0..colon];
@@ -194,9 +193,12 @@ fn buildAddress(gpa: std.mem.Allocator, opts: *Options) !std.net.Address {
         const h = if (host.len == 0) "127.0.0.1" else host;
         return std.net.Address.parseIp(h, port);
     }
+    if (comptime platform.is_windows) {
+        if (opts.unix != null) return error.UnixSocketsUnsupported;
+        return std.net.Address.parseIp("127.0.0.1", 7878);
+    }
     const path = opts.unix orelse "/tmp/openssm.sock";
     std.fs.deleteFileAbsolute(path) catch {};
-    _ = gpa;
     return std.net.Address.initUnix(path);
 }
 
@@ -263,7 +265,7 @@ fn decodeHex(s: []const u8, out: []u8) !usize {
 fn print(comptime fmt: []const u8, args: anytype) void {
     var buf: [2048]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
-    _ = posix.write(posix.STDOUT_FILENO, s) catch {};
+    platform.stdoutWrite(s);
 }
 
 fn usage() void {
@@ -285,12 +287,7 @@ fn usage() void {
 
 /// Ignore SIGPIPE so a dropped IPC client cannot kill the daemon.
 fn ignoreSigpipe() void {
-    const act = posix.Sigaction{
-        .handler = .{ .handler = std.c.SIG.IGN },
-        .mask = std.mem.zeroes(std.c.sigset_t),
-        .flags = 0,
-    };
-    posix.sigaction(posix.SIG.PIPE, &act, null);
+    platform.ignoreSigpipe();
 }
 
 test {

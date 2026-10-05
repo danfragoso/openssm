@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>openssm — read-only Subaru Select Monitor in Zig</title>
-<meta name="description" content="A read-only Subaru Select Monitor reader for macOS, written in Zig, talking to a Tactrix OpenPort 2.0 over USB." />
+<meta name="description" content="A cross-platform read-only Subaru Select Monitor reader written in Zig, talking to a Tactrix OpenPort 2.0 over USB." />
 <style>
   :root {
     --bg: #0b0e14;
@@ -25,7 +25,10 @@
   }
   .wrap { max-width: 900px; margin: 0 auto; padding: 64px 24px 96px; }
   header h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); margin: 0; letter-spacing: -0.02em; }
-  header h1 .cursor { color: var(--accent); }
+  header h1 .accent { color: var(--accent); }
+  header h1 .cursor { color: var(--accent); animation: blink 1.06s step-end infinite; }
+  @keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { header h1 .cursor { animation: none; } }
   .tagline { color: var(--muted); font-size: 1.05rem; margin: 12px 0 0; max-width: 60ch; }
   .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
   .badge {
@@ -49,7 +52,39 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
   .card h3 { margin: 0 0 8px; font-size: .95rem; color: var(--text); }
   .card p { color: var(--muted); font-size: .85rem; margin: 0; }
-  .flow { color: var(--muted); font-size: .85rem; }
+  /* architecture diagram */
+  .diagram { display: grid; justify-items: center; gap: 6px; }
+  .node {
+    width: 100%; max-width: 620px; text-align: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 16px; font-size: .86rem;
+  }
+  .node .label {
+    display: block; color: var(--muted); font-size: .68rem; letter-spacing: .14em;
+    text-transform: uppercase; margin-bottom: 5px;
+  }
+  .node.core { border-color: #24405e; background: linear-gradient(180deg, #101b2a, var(--panel)); }
+  .node.plat { border-style: dashed; border-color: #33405a; }
+  .arrow { color: var(--muted); font-size: .95rem; line-height: 1.2; text-align: center; }
+  .arrow .proto { color: var(--accent); font-size: .72rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 6px; }
+  .chip {
+    border: 1px solid var(--line); background: #0d1420; border-radius: 6px;
+    padding: 3px 9px; font-size: .78rem; color: var(--text);
+  }
+
+  /* roadmap todo */
+  .todo { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+  .todo li { display: flex; gap: 11px; align-items: baseline; font-size: .9rem; }
+  .todo .box { flex: none; color: var(--muted); }
+  .todo li.done { color: var(--muted); }
+  .todo li.done .box { color: var(--accent2); }
+  .todo li.done .txt { text-decoration: line-through; text-decoration-color: #2e3c55; }
+  .todo li.wip .box { color: var(--accent); }
+  .todo .note {
+    color: var(--accent); font-size: .72rem; letter-spacing: .08em;
+    text-transform: uppercase; margin-left: 6px;
+  }
   footer { margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent2); margin-right: 8px; vertical-align: middle; }
 </style>
@@ -57,15 +92,17 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>open<span class="cursor">ssm_</span></h1>
+    <h1>open<span class="accent">ssm</span><span class="cursor">_</span></h1>
     <p class="tagline">
-      A read-only <strong>Subaru Select Monitor</strong> reader for macOS, in Zig.
-      Drives a Tactrix OpenPort 2.0 over USB and serves live SSM data over JSON IPC.
+      A cross-platform, read-only <strong>Subaru Select Monitor</strong> reader in Zig.
+      Drives a Tactrix OpenPort 2.0 over USB and serves live SSM data over JSON IPC —
+      one portable core, many clients.
     </p>
     <div class="badges">
       <span class="badge on">● hardware bring-up done</span>
       <span class="badge">Zig 0.15</span>
-      <span class="badge">macOS · CDC-ACM · no sudo</span>
+      <span class="badge">macOS · Linux · Windows</span>
+      <span class="badge">USB CDC · no sudo · no libusb</span>
       <span class="badge">SSM2 · SSM3 · SSM4</span>
       <span class="badge">read-only</span>
     </div>
@@ -82,25 +119,49 @@
     <p>
       It is a hardware daemon: one process owns the OpenPort and speaks the
       protocols, then exposes a JSON-lines endpoint so a CLI, GUI, logger, or
-      dashboard can all build on the same data. No J2534 DLL, no Windows, no Wine.
+      dashboard can all build on the same data. No J2534 DLL, no vendor driver.
+    </p>
+    <p>
+      The protocol core is pure Zig and OS-agnostic — only the serial backend and
+      a tiny platform shim are platform-specific — so the same daemon runs on
+      macOS, Linux, and Windows and cross-compiles to all three.
     </p>
   </section>
 
   <section>
     <h2>Architecture</h2>
-    <pre><span class="c">CLI / GUI / logger / any client</span>
-        │  <span class="p">JSON lines over Unix socket or TCP</span>
-        ▼
-   ipc.zig ── session.zig ── device.zig ── transport.zig
-                                              │
-                                    serial.zig ▼  <span class="c">(macOS CDC-ACM)</span>
-                                          OpenPort 2.0 ── ECU</pre>
+    <div class="diagram">
+      <div class="node"><span class="label">clients</span>CLI · GUI · TUI · logger · dashboard</div>
+      <div class="arrow">↓ <span class="proto">JSON-lines · unix socket / TCP</span> ↓</div>
+      <div class="node core">
+        <span class="label">portable core · pure Zig · no OS calls</span>
+        <div class="chips">
+          <span class="chip">ipc.zig</span>
+          <span class="chip">session.zig</span>
+          <span class="chip">device.zig</span>
+          <span class="chip">openport.zig</span>
+          <span class="chip">ssm.zig</span>
+          <span class="chip">transport.zig</span>
+        </div>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="node plat">
+        <span class="label">platform shim</span>
+        serial.zig · posix termios | win32 comm · platform.zig
+      </div>
+      <div class="arrow">↓</div>
+      <div class="node"><span class="label">hardware</span>OpenPort 2.0 → ECU · SSM2 / SSM3-CAN / UDS</div>
+    </div>
   </section>
 
   <section>
     <h2>Quick start</h2>
     <pre><span class="c"># build + test</span>
 zig build &amp;&amp; zig build test
+
+<span class="c"># cross-compile the same core everywhere</span>
+zig build -Dtarget=x86_64-linux-musl
+zig build -Dtarget=x86_64-windows-gnu
 
 <span class="c"># device info + battery voltage</span>
 ./zig-out/bin/openssm probe
@@ -118,12 +179,20 @@ printf '{"id":1,"method":"probe"}\n' | nc -U /tmp/openssm.sock
 
   <section>
     <h2>Roadmap</h2>
-    <div class="grid">
-      <div class="card"><h3>1 · Live K-line read</h3><p>Confirm SSM init on the car, implement <code>0xA8</code> address reads with RomRaider scaling.</p></div>
-      <div class="card"><h3>2 · SSM3-CAN + UDS</h3><p>SSM-over-CAN IDs, then VIN, DTCs and freeze frame over ISO14229.</p></div>
-      <div class="card"><h3>3 · Parameter database</h3><p>Parse RomRaider <code>log_defs.xml</code> / <code>ecu_defs.xml</code> into named parameters.</p></div>
-      <div class="card"><h3>4 · Streaming IPC</h3><p>Subscriptions, live push, optional msgpack framing.</p></div>
-    </div>
+    <ul class="todo">
+      <li class="done"><span class="box">[x]</span><span class="txt">OpenPort transport — AT protocol over USB CDC-ACM</span></li>
+      <li class="done"><span class="box">[x]</span><span class="txt">Hardware bring-up — identify, analog, channel open</span></li>
+      <li class="done"><span class="box">[x]</span><span class="txt">SSM2 packet framing + checksum</span></li>
+      <li class="done"><span class="box">[x]</span><span class="txt">JSON-lines IPC daemon (unix socket / TCP)</span></li>
+      <li class="done"><span class="box">[x]</span><span class="txt">Portable core — macOS · Linux · Windows cross-compile</span></li>
+      <li class="wip"><span class="box">[~]</span><span class="txt">Live K-line SSM read — first ECU init on the car<span class="note">next</span></span></li>
+      <li><span class="box">[ ]</span><span class="txt">Address / block reads + RomRaider parameter scaling</span></li>
+      <li><span class="box">[ ]</span><span class="txt">SSM3-CAN — SSM-over-CAN request / response</span></li>
+      <li><span class="box">[ ]</span><span class="txt">SSM4 / UDS read — VIN, DTC, freeze frame</span></li>
+      <li><span class="box">[ ]</span><span class="txt">Parameter database (log_defs.xml / ecu_defs.xml)</span></li>
+      <li><span class="box">[ ]</span><span class="txt">Streaming IPC — subscriptions, msgpack</span></li>
+      <li><span class="box">[ ]</span><span class="txt">Packaging — launchd / systemd / Windows service</span></li>
+    </ul>
   </section>
 
   <footer>

@@ -13,12 +13,17 @@ Architecture is a **hardware daemon** that owns the OpenPort and speaks the
 protocols, exposing a **JSON-lines IPC** endpoint (Unix socket or TCP) so many
 clients can be built on top (CLI today, GUI/TUI/loggers later).
 
+The **core is highly portable**: macOS (primary dev), Linux (primary deploy), and
+Windows where possible. All OS-specific code is confined to the serial backends,
+a tiny platform shim, and IPC address selection (see *Portability*).
+
 ### Non-goals (for now)
 
 - **No flash writes, no ECU programming.** Kernel upload / ROM dump is not
   implemented; do not add write paths without an explicit decision and a donor
   ECU.
-- **No Windows/J2534/DLL emulation.** macOS-native only; no Wine, no vendor DLL.
+- **No Windows/J2534/DLL emulation.** No Wine, no vendor DLL; we speak the
+  device's native USB CDC / COM interface directly on each OS.
 - Not a general OBD-II scanner; the focus is Subaru SSM.
 
 ## Current status (2026-10-04)
@@ -45,9 +50,10 @@ Not yet verified (needs the vehicle powered, VBATT ≈ 12 V):
 
 ## Hardware and protocol notes (hard-won, do not relearn)
 
-- **macOS path:** the OpenPort enumerates as USB CDC-ACM → `/dev/cu.usbmodem*`.
-  Open it with termios; the firmware ignores line coding, DTR+RTS is asserted.
-  No libusb and no root are required on this path. (A vendor-specific / libusb
+- **Serial path:** the OpenPort enumerates as USB CDC-ACM: macOS `/dev/cu.usbmodem*`,
+  Linux `/dev/ttyACM*` (FTDI clones `/dev/ttyUSB*`), Windows `COMx`. Open it with
+  termios (POSIX) or the Win32 comm API; the firmware ignores line coding, DTR+RTS
+  is asserted. No libusb and no root are required. (A vendor-specific / libusb
   fallback may be needed for some clones; not implemented.)
 - **AT protocol:** line-oriented ASCII, every command ends with a sequence number
   `1..0xFFFF` that the device echoes. Commands end with `\r\n`; a binary payload
@@ -84,17 +90,46 @@ Reference material (respect licenses):
 ## Module map
 
 ```
-src/ssm.zig        SSM2 packet framing, checksum, init/addrRead builders
-src/openport.zig   OpenPort AT command builders + streaming reply/frame parser
-src/transport.zig  Transport vtable; Mock (scripted) and AutoMock (synthesizes replies)
-src/serial.zig     macOS/link serial transport (termios); firstCandidate autodetect
-src/device.zig     Device state machine: seq, transact, open/close, analog, filter,
-                   raw bring-up, RX frame queue
-src/session.zig    SSM Link: openKline/openCan, send/recv, request (seq+cmd match)
-src/ipc.zig        JSON-lines server (Unix socket / TCP), thread-per-connection
-src/main.zig       CLI: probe, raw, kline, serve, mock-serve
-www/               static project landing page
+src/ssm.zig           SSM2 packet framing, checksum, init/addrRead builders
+src/openport.zig      OpenPort AT command builders + streaming reply/frame parser
+src/transport.zig     Transport vtable; Mock (scripted) and AutoMock (synthesizes replies)
+src/serial.zig        serial dispatch: picks the backend for the target OS
+src/serial_posix.zig  macOS/Linux termios backend + /dev autodetect
+src/serial_windows.zig Win32 comm backend + COMx autodetect
+src/platform.zig      tiny OS shims: stdout write, SIGPIPE
+src/device.zig        Device state machine: seq, transact, open/close, analog, filter,
+                      raw bring-up, RX frame queue
+src/session.zig       SSM Link: openKline/openCan, send/recv, request (seq+cmd match)
+src/ipc.zig           JSON-lines server (Unix socket / TCP), thread-per-connection
+src/main.zig          CLI: probe, raw, kline, serve, mock-serve
+www/                  static project landing page
 ```
+
+## Portability
+
+Tier-one target is **Linux** (deploy), with **macOS** as the dev platform and
+**Windows** supported where the platform allows. The rule: **the protocol core
+never touches the OS.** `ssm`, `openport`, `transport`, `device`, and `session`
+are pure Zig and compile everywhere; all OS-specific code lives in:
+
+- `serial_*.zig` — the transport backend, selected at comptime in `serial.zig`.
+- `platform.zig` — stdout + SIGPIPE shims.
+- `main.zig` address selection — Unix domain sockets on POSIX, TCP on Windows.
+
+Cross-compilation is a CI gate (all must build clean):
+
+```sh
+zig build -Dtarget=x86_64-linux-musl
+zig build -Dtarget=aarch64-linux-musl
+zig build -Dtarget=x86_64-windows-gnu
+zig build -Dtarget=aarch64-windows-gnu
+zig build -Dtarget=x86_64-macos
+zig build -Dtarget=aarch64-macos
+```
+
+When adding a feature, keep OS calls out of the core; put them behind `Transport`
+or in `serial_*.zig` / `platform.zig`. Windows is type-checked by cross-compile
+but not yet run on real hardware.
 
 Data flow: `CLI/IPC → Device → Transport (Serial|Mock) → OpenPort`; `session.Link`
 wraps `Device` with an open channel and SSM request/response semantics.

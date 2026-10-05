@@ -10,7 +10,6 @@
 //! errors: {"id":3,"error":{"message":"Timeout"}}
 
 const std = @import("std");
-const posix = std.posix;
 const Device = @import("device.zig").Device;
 const openport = @import("openport.zig");
 
@@ -52,8 +51,8 @@ fn handleConn(ctx: *Context, conn: std.net.Server.Connection) void {
                     return;
                 };
                 defer ctx.gpa.free(resp);
-                writeAll(conn.stream.handle, resp) catch return;
-                writeAll(conn.stream.handle, "\n") catch return;
+                conn.stream.writeAll(resp) catch return;
+                conn.stream.writeAll("\n") catch return;
             }
             const rest = len - (idx + 1);
             std.mem.copyForwards(u8, buf[0..rest], buf[idx + 1 .. len]);
@@ -63,16 +62,9 @@ fn handleConn(ctx: *Context, conn: std.net.Server.Connection) void {
             len = 0; // oversize line: drop it
             continue;
         }
-        const n = posix.read(conn.stream.handle, buf[len..]) catch return;
+        const n = conn.stream.read(buf[len..]) catch return;
         if (n == 0) return;
         len += n;
-    }
-}
-
-fn writeAll(fd: posix.fd_t, bytes: []const u8) !void {
-    var done: usize = 0;
-    while (done < bytes.len) {
-        done += try posix.write(fd, bytes[done..]);
     }
 }
 

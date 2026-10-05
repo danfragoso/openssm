@@ -1,8 +1,13 @@
 # openssm
 
-A **read-only Subaru Select Monitor** reader for macOS, written in **Zig 0.15**.
-It talks to a **Tactrix OpenPort 2.0** (or clone) over USB and exposes a
-**JSON-lines IPC** endpoint so any number of clients can consume live SSM data.
+A cross-platform **read-only Subaru Select Monitor** reader in **Zig 0.15**.
+It runs on **macOS, Linux, and Windows**, talks to a **Tactrix OpenPort 2.0**
+(or clone) over USB, and exposes a **JSON-lines IPC** endpoint so any number of
+clients can consume live SSM data.
+
+The protocol core is pure Zig and OS-agnostic; only the serial backend and a
+tiny platform shim are platform-specific, so the same daemon builds and behaves
+identically everywhere.
 
 The target is close to 1:1 parity with the **read** functions of Subaru Select
 Monitor **SSM3 / SSM4** for 2007+ vehicles, spanning the SSM2 (K-line),
@@ -25,14 +30,26 @@ notes, and roadmap.
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel) with Zig **0.15.1**
+- Zig **0.15.1**
 - A Tactrix OpenPort 2.0 or compatible clone
+- macOS, Linux (tier-one), or Windows
 
 ## Build
 
 ```sh
 zig build          # -> ./zig-out/bin/openssm
-zig build test     # run the unit tests (28, no hardware needed)
+zig build test     # run the unit tests (28+, no hardware needed)
+```
+
+Cross-compile (all targets build clean):
+
+```sh
+zig build -Dtarget=x86_64-linux-musl
+zig build -Dtarget=aarch64-linux-musl
+zig build -Dtarget=x86_64-windows-gnu
+zig build -Dtarget=aarch64-windows-gnu
+zig build -Dtarget=x86_64-macos
+zig build -Dtarget=aarch64-macos
 ```
 
 ## Use
@@ -48,14 +65,16 @@ zig build test     # run the unit tests (28, no hardware needed)
 # Open the K-line SSM channel and send the ECU init
 ./zig-out/bin/openssm kline
 
-# Serve JSON-lines IPC over a Unix socket (or --tcp 127.0.0.1:7878)
+# Serve JSON-lines IPC over a Unix socket (POSIX) or TCP (all platforms)
 ./zig-out/bin/openssm serve --unix /tmp/openssm.sock
+./zig-out/bin/openssm serve --tcp 127.0.0.1:7878
 
 # Same, but with a synthetic device so clients can be developed with no hardware
 ./zig-out/bin/openssm mock-serve --unix /tmp/openssm.sock
 ```
 
-`--serial` is auto-detected from `/dev/cu.usbmodem*` / `usbserial*`.
+`--serial` is auto-detected: `/dev/cu.usbmodem*` / `ttyACM*` / `ttyUSB*` on
+POSIX, `COMx` on Windows.
 
 ### IPC example
 
@@ -72,14 +91,15 @@ CLI / IPC clients
       ▼
    ipc.zig ── session.zig ── device.zig ── transport.zig
                                               │
-                                    serial.zig ▼  (macOS CDC-ACM)
+                       serial.zig ▼  (posix termios | win32 comm)
                                           OpenPort 2.0 ── ECU
 ```
 
 - `ssm.zig` — SSM2 packet framing and builders
 - `openport.zig` — OpenPort AT command/reply protocol
 - `transport.zig` — transport interface + hardware-free mocks
-- `serial.zig` — macOS termios serial transport
+- `serial.zig` — serial dispatch (`serial_posix.zig` termios, `serial_windows.zig` Win32)
+- `platform.zig` — small OS shims (stdout, SIGPIPE)
 - `device.zig` — device state machine (sequence numbers, channels, raw frames)
 - `session.zig` — SSM link (K-line / CAN open, send, request)
 - `ipc.zig` — JSON-lines server
