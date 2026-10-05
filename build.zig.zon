@@ -2,6 +2,7 @@
     .name = .openssm,
     .version = "0.1.0",
     .minimum_zig_version = "0.15.1",
+    .license = "MIT",
     .fingerprint = 0x3d77675e54d5b1,
     .paths = .{
         "build.zig",

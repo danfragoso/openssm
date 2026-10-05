@@ -105,6 +105,21 @@ CLI / IPC clients
 - `ipc.zig` — JSON-lines server
 - `main.zig` — CLI
 
+## Disclaimer
+
+### AI usage
+
+This project was built with the help of **AI coding assistant tools**. Every
+change is reviewed, compiled, and tested, but treat the code as you would any
+other third-party software: read it and verify it before relying on it.
+
+### Warranty
+
+The software is provided "as is", without warranty of any kind, express or
+implied, as set out in the [MIT License](LICENSE). `openssm` is read-only by
+design and performs no flash writes or ECU programming, but the authors accept
+no responsibility for damage to hardware, vehicles, or data.
+
 ## License
 
-TBD.
+MIT — see [LICENSE](LICENSE).
